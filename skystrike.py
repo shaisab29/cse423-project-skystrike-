@@ -1,3 +1,4 @@
+
 """
 SkyStrike - 3D Aerial Combat Simulation
 A comprehensive aerial combat game featuring intelligent AI, multi-camera systems,
@@ -42,6 +43,8 @@ DIFFICULTY_SCALE_RATE = 0.05
 # UTILITY CLASSES
 # ============================================================================
 
+=======
+
 class Vector3:
     """3D vector math operations"""
     def __init__(self, x=0, y=0, z=0):
@@ -72,6 +75,7 @@ class Vector3:
     
     def copy(self):
         return Vector3(self.x, self.y, self.z)
+
 
 
 # ============================================================================
@@ -407,6 +411,8 @@ class Projectile:
             glutSolidSphere(1, 6, 6)
         
         glPopMatrix()
+
+=======
 
 
 def main():
