@@ -697,7 +697,372 @@ class CameraManager:
         self.mode = (self.mode + 1) % 4
 
 
-
+class SkyStrike:
+    """Main game controller"""
+    def __init__(self):
+        self.state = GameState.MENU
+        self.player = PlayerAircraft()
+        self.camera = CameraManager()
+        self.enemies = []
+        self.projectiles = []
+        self.explosions = []
+        self.clouds = [Cloud() for _ in range(20)]
+        
+        self.score = 0
+        self.combo = 0
+        self.combo_timer = 0
+        self.shots_fired = 0
+        self.shots_hit = 0
+        
+        self.difficulty_multiplier = 1.0
+        self.game_time = 0
+        self.enemy_spawn_timer = 0
+        
+        self.last_time = time.time()
+        
+        # Debug modes
+        self.god_mode = False
+        self.auto_aim = False
+        
+        # Mouse state
+        self.mouse_left = False
+        self.mouse_right = False
+        
+        # Mission system
+        self.current_mission = None
+        self.mission_timer = 0
+        self.mission_kills = {}  # Track kills by enemy type
+        self.friendly_aircraft = None
+        self.defense_base = None
+        self.boss_enemy = None
+        self.defense_base = None
+        self.boss_enemy = None
+        self.breached_enemies = set()  # Track enemies that breached defense
+        
+        # Mission internal counters
+        self.mission_enemies_spawned = 0
+    
+    
+    def reset(self):
+        """Reset game to initial state"""
+        self.player = PlayerAircraft()
+        self.enemies = []
+        self.projectiles = []
+        self.explosions = []
+        self.score = 0
+        self.combo = 0
+        self.combo_timer = 0
+        self.shots_fired = 0
+        self.shots_hit = 0
+        self.difficulty_multiplier = 1.0
+        self.game_time = 0
+        self.enemy_spawn_timer = 0
+        self.mission_timer = 0
+        self.mission_kills = {}
+        self.friendly_aircraft = None
+        self.defense_base = None
+        self.boss_enemy = None
+        self.breached_enemies = set()
+        self.mission_enemies_spawned = 0
+        self.state = GameState.PLAYING
+    
+    def start_mission(self, mission):
+        """Start a specific mission"""
+        self.reset()
+        self.current_mission = mission
+        self.mission_timer = 0
+        self.mission_kills = {}
+        
+        # Setup mission-specific objects
+        if mission.type == MissionType.ESCORT:
+            # Spawn friendly aircraft
+            start_pos = Vector3(-WORLD_SIZE * 0.8, 100, 0)
+            self.friendly_aircraft = FriendlyAircraft(start_pos, mission.objectives["escort_speed"])
+            self.friendly_aircraft.health = mission.objectives["escort_health"]
+            self.friendly_aircraft.max_health = mission.objectives["escort_health"]
+        
+        elif mission.type == MissionType.DEFENSE:
+            # Create defense base
+            self.defense_base = DefenseBase()
+            self.breached_enemies = set()
+        
+        elif mission.type == MissionType.BOSS:
+            # Spawn boss enemy
+            boss_type = mission.objectives["boss_type"]
+            self.boss_enemy = Enemy(boss_type)
+            self.boss_enemy.health = mission.objectives["boss_health"]
+            self.boss_enemy.max_health = mission.objectives["boss_health"]
+            self.boss_enemy.size *= 1.5  # Make boss bigger
+            self.enemies.append(self.boss_enemy)
+        
+        self.state = GameState.PLAYING
+    
+    def update(self, dt):
+        if self.state == GameState.PLAYING:
+            self.game_time += dt
+            
+            # Mission-specific updates
+            if self.current_mission:
+                self.mission_timer += dt
+                
+                # Update friendly aircraft (escort mission)
+                if self.friendly_aircraft:
+                    self.friendly_aircraft.update(dt)
+                    if self.friendly_aircraft.reached_destination:
+                        # Mission success!
+                        self.state = GameState.MISSION_COMPLETE
+                        self.current_mission.completed = True
+                        # Unlock next mission
+                        if self.current_mission.id < len(MISSIONS) - 1:
+                            MISSIONS[self.current_mission.id + 1].unlocked = True
+                        return
+                    elif not self.friendly_aircraft.alive:
+                        # Mission failed
+                        self.state = GameState.MISSION_FAILED
+                        return
+                
+                # Check defense breaches
+                if self.defense_base:
+                    for enemy in self.enemies:
+                        if enemy.alive and id(enemy) not in self.breached_enemies:
+                            if self.defense_base.check_breach(enemy.position):
+                                self.breached_enemies.add(id(enemy))
+                                self.defense_base.breaches += 1
+                                if self.defense_base.breaches >= self.current_mission.objectives["max_breaches"]:
+                                    self.state = GameState.MISSION_FAILED
+                                    return
+                
+                # Mission-specific enemy spawning
+                self.enemy_spawn_timer += dt
+                spawn_interval = ENEMY_SPAWN_INTERVAL
+                
+                if self.current_mission.type == MissionType.ELIMINATION:
+                    # Spawn specific enemy types for elimination missions
+                    if "target_type" in self.current_mission.objectives:
+                        target_type = self.current_mission.objectives["target_type"]
+                        if self.enemy_spawn_timer > spawn_interval and len(self.enemies) < 5:
+                            self.enemy_spawn_timer = 0
+                            self.enemies.append(Enemy(target_type))
+                            self.mission_enemies_spawned += 1
+                    elif "targets" in self.current_mission.objectives:
+                        # Multiple target types
+                        if self.enemy_spawn_timer > spawn_interval and len(self.enemies) < 8:
+                            self.enemy_spawn_timer = 0
+                            # Spawn based on what's still needed
+                            for etype, count in self.current_mission.objectives["targets"].items():
+                                killed = self.mission_kills.get(etype, 0)
+                                if killed < count:
+                                    self.enemies.append(Enemy(etype))
+                                    self.mission_enemies_spawned += 1
+                                    break
+                
+                elif self.current_mission.type == MissionType.SURVIVAL:
+                    # Continuous enemy spawning for survival
+                    if self.enemy_spawn_timer > spawn_interval / 2 and len(self.enemies) < 10:
+                        self.enemy_spawn_timer = 0
+                        enemy_type = random.choice(["scout", "jet", "bomber"])
+                        self.enemies.append(Enemy(enemy_type))
+                    
+                    # Check if survived long enough
+                    if self.mission_timer >= self.current_mission.objectives["duration"]:
+                        self.state = GameState.MISSION_COMPLETE
+                        self.current_mission.completed = True
+                        if self.current_mission.id < len(MISSIONS) - 1:
+                            MISSIONS[self.current_mission.id + 1].unlocked = True
+                        return
+                
+                elif self.current_mission.type == MissionType.ESCORT:
+                    # Spawn enemies to attack the escort
+                    if self.enemy_spawn_timer > spawn_interval and len(self.enemies) < 6:
+                        self.enemy_spawn_timer = 0
+                        enemy_type = random.choice(["scout", "jet"])
+                        self.enemies.append(Enemy(enemy_type))
+                
+                elif self.current_mission.type == MissionType.DEFENSE:
+                    # Wave-based spawning
+                    # Track total spawned against mission requirement
+                    total_to_spawn = self.current_mission.objectives["enemy_waves"] * 5 # Assuming 5 per wave roughly or just total count
+                    # Adjusting interpretation: "enemy_waves" usually implies total count in similar games or we fix it to mean exact count here
+                    # Let's assume enemy_waves is actually "Total Enemies to Defeat" for simplicity in this specific fix
+                    
+                    if self.mission_enemies_spawned < self.current_mission.objectives["enemy_waves"]:
+                        if self.enemy_spawn_timer > spawn_interval and len(self.enemies) < 5:
+                            self.enemy_spawn_timer = 0
+                            enemy_type = random.choice(["scout", "jet"])
+                            self.enemies.append(Enemy(enemy_type))
+                            self.mission_enemies_spawned += 1
+                    else:
+                        # All waves spawned, check if all destroyed
+                        if len(self.enemies) == 0:
+                            self.state = GameState.MISSION_COMPLETE
+                            self.current_mission.completed = True
+                            if self.current_mission.id < len(MISSIONS) - 1:
+                                MISSIONS[self.current_mission.id + 1].unlocked = True
+                            return
+                
+                elif self.current_mission.type == MissionType.BOSS:
+                    # Check if boss is defeated
+                    if self.boss_enemy and not self.boss_enemy.alive:
+                        self.state = GameState.MISSION_COMPLETE
+                        self.current_mission.completed = True
+                        if self.current_mission.id < len(MISSIONS) - 1:
+                            MISSIONS[self.current_mission.id + 1].unlocked = True
+                        return
+            else:
+                # Free play mode (original behavior)
+                self.difficulty_multiplier = 1.0 + self.game_time * DIFFICULTY_SCALE_RATE
+                
+                # Spawn enemies
+                self.enemy_spawn_timer += dt
+                spawn_interval = ENEMY_SPAWN_INTERVAL / self.difficulty_multiplier
+                if self.enemy_spawn_timer > spawn_interval and len(self.enemies) < MAX_ENEMIES:
+                    self.enemy_spawn_timer = 0
+                    enemy_type = random.choices(
+                        ["scout", "jet", "bomber"],
+                        weights=[0.5, 0.3, 0.2]
+                    )[0]
+                    self.enemies.append(Enemy(enemy_type))
+            
+            # Update player
+            self.player.update(dt)
+            
+            # Update combo timer
+            if self.combo > 0:
+                self.combo_timer -= dt
+                if self.combo_timer <= 0:
+                    self.combo = 0
+            
+            # Update enemies
+            for enemy in self.enemies[:]:
+                if enemy.alive:
+                    projectile = enemy.update(dt, self.player.position, self.difficulty_multiplier)
+                    if projectile:
+                        self.projectiles.append(projectile)
+                else:
+                    self.enemies.remove(enemy)
+            
+            # Update projectiles
+            for proj in self.projectiles[:]:
+                proj.update(dt, self.enemies)
+                if not proj.alive:
+                    self.projectiles.remove(proj)
+            
+            # Update explosions
+            for exp in self.explosions[:]:
+                if not exp.update(dt):
+                    self.explosions.remove(exp)
+            
+            # Update clouds
+            for cloud in self.clouds:
+                cloud.update(dt)
+            
+            # Collision detection
+            self.check_collisions()
+            
+            # Check game over
+            if not self.player.alive and not self.god_mode:
+                if self.current_mission:
+                    self.state = GameState.MISSION_FAILED
+                else:
+                    self.state = GameState.GAME_OVER
+        
+        elif self.state == GameState.MENU:
+            # Rotate camera in menu
+            pass
+    
+    def check_collisions(self):
+        # Projectile vs Enemy
+        for proj in self.projectiles[:]:
+            if not proj.alive or proj.owner != "player":
+                continue
+            
+            for enemy in self.enemies:
+                if not enemy.alive:
+                    continue
+                
+                if proj.position.distance_to(enemy.position) < enemy.size:
+                    proj.alive = False
+                    self.shots_hit += 1
+                    
+                    if enemy.take_damage(proj.damage):
+                        # Enemy destroyed
+                        self.explosions.append(Explosion(enemy.position))
+                        
+                        # Track mission kills
+                        if self.current_mission:
+                            enemy_type = enemy.type
+                            self.mission_kills[enemy_type] = self.mission_kills.get(enemy_type, 0) + 1
+                            
+                            # Check elimination mission completion
+                            if self.current_mission.type == MissionType.ELIMINATION:
+                                if "target_type" in self.current_mission.objectives:
+                                    target_type = self.current_mission.objectives["target_type"]
+                                    target_count = self.current_mission.objectives["target_count"]
+                                    if self.mission_kills.get(target_type, 0) >= target_count:
+                                        self.state = GameState.MISSION_COMPLETE
+                                        self.current_mission.completed = True
+                                        if self.current_mission.id < len(MISSIONS) - 1:
+                                            MISSIONS[self.current_mission.id + 1].unlocked = True
+                                elif "targets" in self.current_mission.objectives:
+                                    # Check if all target types are eliminated
+                                    all_complete = True
+                                    for etype, count in self.current_mission.objectives["targets"].items():
+                                        if self.mission_kills.get(etype, 0) < count:
+                                            all_complete = False
+                                            break
+                                    if all_complete:
+                                        self.state = GameState.MISSION_COMPLETE
+                                        self.current_mission.completed = True
+                                        if self.current_mission.id < len(MISSIONS) - 1:
+                                            MISSIONS[self.current_mission.id + 1].unlocked = True
+                        
+                        # Score calculation
+                        base_score = {"scout": 100, "jet": 200, "bomber": 300}[enemy.type]
+                        combo_bonus = 1 + (self.combo * 0.5)
+                        missile_bonus = 2 if proj.is_missile else 1
+                        
+                        points = int(base_score * combo_bonus * missile_bonus)
+                        self.score += points
+                        
+                        # Combo system
+                        self.combo += 1
+                        self.combo_timer = 3.0
+                    
+                    break
+        
+        # Projectile vs Player
+        if not self.god_mode:
+            for proj in self.projectiles[:]:
+                if not proj.alive or proj.owner != "enemy":
+                    continue
+                
+                if proj.position.distance_to(self.player.position) < 15:
+                    proj.alive = False
+                    self.player.take_damage(proj.damage)
+                    
+                    if not self.player.alive:
+                        self.explosions.append(Explosion(self.player.position))
+        
+        # Projectile vs Friendly Aircraft (escort mission)
+        if self.friendly_aircraft and self.friendly_aircraft.alive:
+            for proj in self.projectiles[:]:
+                if not proj.alive or proj.owner != "enemy":
+                    continue
+                
+                if proj.position.distance_to(self.friendly_aircraft.position) < 10:
+                    proj.alive = False
+                    self.friendly_aircraft.take_damage(proj.damage)
+                    if not self.friendly_aircraft.alive:
+                        self.explosions.append(Explosion(self.friendly_aircraft.position))
+        
+        # Enemy vs Player collision
+        if not self.god_mode:
+            for enemy in self.enemies:
+                if enemy.alive and self.player.alive:
+                    if enemy.position.distance_to(self.player.position) < enemy.size + 10:
+                        enemy.take_damage(enemy.max_health)
+                        self.player.take_damage(30)
+                        self.explosions.append(Explosion(enemy.position))
 
 
 
