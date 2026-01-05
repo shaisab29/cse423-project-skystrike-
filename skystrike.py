@@ -405,6 +405,88 @@ class Projectile:
         
         glPopMatrix()
 
+
+
+def keyboard(key, x, y):
+    k = key.decode('utf-8').lower()
+    
+    if game.state == GameState.MENU:
+        if k == ' ':
+            game.reset()
+    
+    elif game.state == GameState.PLAYING:
+        if k == '\x1b':  # ESC
+            game.state = GameState.PAUSED
+        elif k == 'w':
+            game.player.input_up = True
+        elif k == 's':
+            game.player.input_down = True
+        elif k == 'a':
+            game.player.input_left = True
+        elif k == 'd':
+            game.player.input_right = True
+        elif k == ' ':
+            game.player.input_up = True
+        elif k == '\t':  # TAB key for going down
+            game.player.input_down = True
+        elif k == 'c':
+            game.camera.cycle()
+        # Debug keys
+        elif k == 'g':
+            game.god_mode = not game.god_mode
+            print(f"God mode: {game.god_mode}")
+    
+    elif game.state == GameState.PAUSED:
+        if k == '\x1b':  # ESC
+            game.state = GameState.PLAYING
+    
+    elif game.state == GameState.GAME_OVER:
+        if k == 'r':
+            game.reset()
+        elif k == 'q':
+            sys.exit(0)
+
+def keyboard_up(key, x, y):
+    k = key.decode('utf-8').lower()
+    
+    if k == 'w':
+        game.player.input_up = False
+    elif k == 's':
+        game.player.input_down = False
+    elif k == 'a':
+        game.player.input_left = False
+    elif k == 'd':
+        game.player.input_right = False
+    elif k == ' ':
+        game.player.input_up = False
+    elif k == '\t':  # TAB key release
+        game.player.input_down = False
+
+def special(key, x, y):
+    pass
+
+def special_up(key, x, y):
+    pass
+
+def mouse(button, state, x, y):
+    if game.state == GameState.PLAYING:
+        if button == GLUT_LEFT_BUTTON:
+            if state == GLUT_DOWN:
+                game.mouse_left = True
+            else:
+                game.mouse_left = False
+        
+        elif button == GLUT_RIGHT_BUTTON:
+            if state == GLUT_DOWN:
+                game.mouse_right = True
+                # Fire missile
+                proj = game.player.fire_missile()
+                if proj:
+                    game.projectiles.append(proj)
+                    game.shots_fired += 1
+            else:
+                game.mouse_right = False
+
 def main():
     global game
     
