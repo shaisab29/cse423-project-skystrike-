@@ -609,6 +609,92 @@ class Enemy:
 
 
 
+class CameraMode:
+    CHASE = 0
+    COCKPIT = 1
+    TACTICAL = 2
+    ORBIT = 3
+
+class CameraManager:
+    """Multi-mode camera system"""
+    def __init__(self):
+        self.mode = CameraMode.CHASE
+        self.orbit_angle = 0
+    
+    def apply(self, player):
+        if self.mode == CameraMode.CHASE:
+            # Third-person chase camera
+            rad = math.radians(player.rotation)
+            offset_dist = 40
+            offset_height = 15
+            
+            cam_x = player.position.x - math.sin(rad) * offset_dist
+            cam_y = player.position.y + offset_height
+            cam_z = player.position.z - math.cos(rad) * offset_dist
+            
+            gluLookAt(
+                cam_x, cam_y, cam_z,
+                player.position.x, player.position.y, player.position.z,
+                0, 1, 0
+            )
+        
+        elif self.mode == CameraMode.COCKPIT:
+            # First-person cockpit view - adjusted to be inside the "cockpit"
+            # Slightly back from the nose to see the frame
+            forward = player.get_forward_direction()
+            
+            # Position camera inside the hypothetical cockpit
+            # Taking player rotation into account
+            rad_yaw = math.radians(player.rotation)
+            rad_pitch = math.radians(player.pitch)
+            
+            # Offset from center
+            cam_offset = Vector3(0, 3, 2)
+            
+            # Apply rotation to offset
+            # Simple rotation logic for the offset
+            rx = cam_offset.x * math.cos(rad_yaw) - cam_offset.z * math.sin(rad_yaw)
+            rz = cam_offset.x * math.sin(rad_yaw) + cam_offset.z * math.cos(rad_yaw)
+            
+            cam_x = player.position.x + rx
+            cam_y = player.position.y + cam_offset.y
+            cam_z = player.position.z + rz
+            
+            # Look forward relative to player
+            look_target = player.position + forward * 50
+            
+            gluLookAt(
+                cam_x, cam_y, cam_z,
+                look_target.x, look_target.y, look_target.z,
+                0, 1, 0
+            )
+        
+        elif self.mode == CameraMode.TACTICAL:
+            # Top-down tactical view
+            gluLookAt(
+                player.position.x, player.position.y + 200, player.position.z,
+                player.position.x, player.position.y, player.position.z,
+                0, 0, -1
+            )
+        
+        elif self.mode == CameraMode.ORBIT:
+            # Cinematic orbit camera
+            self.orbit_angle += 0.5
+            radius = 100
+            rad = math.radians(self.orbit_angle)
+            
+            cam_x = player.position.x + math.cos(rad) * radius
+            cam_z = player.position.z + math.sin(rad) * radius
+            cam_y = player.position.y + 30
+            
+            gluLookAt(
+                cam_x, cam_y, cam_z,
+                player.position.x, player.position.y, player.position.z,
+                0, 1, 0
+            )
+    
+    def cycle(self):
+        self.mode = (self.mode + 1) % 4
 
 
 
