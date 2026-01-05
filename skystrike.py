@@ -1,10 +1,3 @@
-
-"""
-SkyStrike - 3D Aerial Combat Simulation
-A comprehensive aerial combat game featuring intelligent AI, multi-camera systems,
-advanced weapon mechanics, and progressive difficulty.
-"""
-
 from OpenGL.GL import *
 from OpenGL.GLU import *
 from OpenGL.GLUT import *
@@ -43,7 +36,7 @@ DIFFICULTY_SCALE_RATE = 0.05
 # UTILITY CLASSES
 # ============================================================================
 
-=======
+
 
 class Vector3:
     """3D vector math operations"""
@@ -412,9 +405,6 @@ class Projectile:
         
         glPopMatrix()
 
-=======
-
-
 def main():
     global game
     
@@ -443,8 +433,7 @@ def main():
     glutSpecialFunc(special)
     glutSpecialUpFunc(special_up)
     glutMouseFunc(mouse)
-    glutMotionFunc(motion)
-    glutPassiveMotionFunc(passive_motion)
+  
     
     print("SkyStrike - Aerial Combat Simulation")
     print("=" * 50)
