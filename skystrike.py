@@ -848,10 +848,6 @@ class PlayerAircraft:
 
 
 
-
-
-
-
 class CameraMode:
     CHASE = 0
     COCKPIT = 1
