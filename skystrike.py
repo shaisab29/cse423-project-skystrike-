@@ -1065,6 +1065,509 @@ class SkyStrike:
                         self.explosions.append(Explosion(enemy.position))
 
 
+    
+    def render(self):
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        
+        if self.state == GameState.MENU:
+            self.render_menu()
+        elif self.state == GameState.MISSION_SELECT:
+            self.render_mission_select()
+        elif self.state == GameState.MISSION_BRIEFING:
+            self.render_mission_briefing()
+        elif self.state == GameState.PLAYING or self.state == GameState.PAUSED:
+            self.render_game()
+            if self.state == GameState.PAUSED:
+                self.render_pause_overlay()
+        elif self.state == GameState.MISSION_COMPLETE:
+            self.render_game()
+            self.render_mission_complete()
+        elif self.state == GameState.MISSION_FAILED:
+            self.render_game()
+            self.render_mission_failed()
+        elif self.state == GameState.GAME_OVER:
+            self.render_game()
+            self.render_game_over()
+        
+        glutSwapBuffers()
+    
+    def render_game(self):
+        # Set up 3D perspective
+        glMatrixMode(GL_PROJECTION)
+        glLoadIdentity()
+        gluPerspective(60, WIN_W / WIN_H, 1, 2000)
+        glMatrixMode(GL_MODELVIEW)
+        glLoadIdentity()
+        
+        # Apply camera
+        self.camera.apply(self.player)
+        
+        # Enable depth test and blending
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        
+        # Render sky gradient
+        self.render_sky()
+        
+        # Render clouds
+        for cloud in self.clouds:
+            cloud.render()
+        
+        # Render world boundaries (invisible but helpful for debugging)
+        # self.render_boundaries()
+        
+        # Render player
+        if self.player.alive:
+            self.player.render()
+        
+        # Render enemies
+        for enemy in self.enemies:
+            enemy.render()
+        
+        # Render mission-specific objects
+        if self.friendly_aircraft:
+            self.friendly_aircraft.render()
+        
+        if self.defense_base:
+            self.defense_base.render()
+        
+        # Render projectiles
+        for proj in self.projectiles:
+            proj.render()
+        
+        # Render explosions
+        for exp in self.explosions:
+            exp.render()
+        
+        glDisable(GL_DEPTH_TEST)
+        
+        # Render HUD
+        self.render_hud()
+        
+        # Render Cockpit Overlay if in Cockpit mode
+        if self.camera.mode == CameraMode.COCKPIT:
+            self.render_cockpit()
+    
+    def render_sky(self):
+        """Render sky gradient background"""
+        glDisable(GL_DEPTH_TEST)
+        glMatrixMode(GL_PROJECTION)
+        glPushMatrix()
+        glLoadIdentity()
+        glOrtho(-1, 1, -1, 1, -1, 1)
+        glMatrixMode(GL_MODELVIEW)
+        glPushMatrix()
+        glLoadIdentity()
+        
+        glBegin(GL_QUADS)
+        # Top (lighter blue)
+        glColor3f(0.4, 0.6, 0.9)
+        glVertex2f(-1, 1)
+        glVertex2f(1, 1)
+        # Bottom (darker blue)
+        glColor3f(0.2, 0.3, 0.5)
+        glVertex2f(1, -1)
+        glVertex2f(-1, -1)
+        glEnd()
+        
+        glPopMatrix()
+        glMatrixMode(GL_PROJECTION)
+        glPopMatrix()
+        glMatrixMode(GL_MODELVIEW)
+        glEnable(GL_DEPTH_TEST)
+    
+    def render_hud(self):
+        """Render HUD elements"""
+        glMatrixMode(GL_PROJECTION)
+        glPushMatrix()
+        glLoadIdentity()
+        glOrtho(0, WIN_W, 0, WIN_H, -1, 1)
+        glMatrixMode(GL_MODELVIEW)
+        glPushMatrix()
+        glLoadIdentity()
+        
+        # Health bar
+        health_percent = self.player.health / self.player.max_health
+        bar_width = 300
+        bar_height = 20
+        bar_x = 20
+        bar_y = WIN_H - 40
+        
+        # Background
+        glColor3f(0.2, 0.2, 0.2)
+        glBegin(GL_QUADS)
+        glVertex2f(bar_x, bar_y)
+        glVertex2f(bar_x + bar_width, bar_y)
+        glVertex2f(bar_x + bar_width, bar_y + bar_height)
+        glVertex2f(bar_x, bar_y + bar_height)
+        glEnd()
+        
+        # Health
+        if health_percent > 0.6:
+            glColor3f(0, 1, 0)
+        elif health_percent > 0.3:
+            glColor3f(1, 1, 0)
+        else:
+            glColor3f(1, 0, 0)
+        
+        glBegin(GL_QUADS)
+        glVertex2f(bar_x, bar_y)
+        glVertex2f(bar_x + bar_width * health_percent, bar_y + bar_height)
+        glVertex2f(bar_x, bar_y + bar_height)
+        glEnd()
+        
+        # Draw text info
+        self.render_text(f"SCORE: {self.score}", 20, WIN_H - 70)
+        self.render_text(f"ALT: {int(self.player.position.y)}", 20, WIN_H - 90)
+        self.render_text(f"SPD: {int(300 + self.player.velocity.length() * 5)}", 20, WIN_H - 110)
+        
+        # Weapon status
+        self.render_text(f"MISSILES: {self.player.missiles}", 20, WIN_H - 140)
+        
+        if self.current_mission:
+             self.render_text(f"MISSION: {self.current_mission.name}", WIN_W - 250, WIN_H - 40)
+             
+             # Mission specific objectives
+             if self.current_mission.type == MissionType.DEFENSE:
+                 if self.defense_base:
+                      self.render_text(f"BREACHES: {self.defense_base.breaches}/{self.current_mission.objectives['max_breaches']}", WIN_W - 250, WIN_H - 60)
+             elif self.current_mission.type == MissionType.ELIMINATION:
+                 if "target_type" in self.current_mission.objectives:
+                     ttype = self.current_mission.objectives["target_type"]
+                     tcount = self.current_mission.objectives["target_count"]
+                     killed = self.mission_kills.get(ttype, 0)
+                     self.render_text(f"TARGETS: {killed}/{tcount}", WIN_W - 250, WIN_H - 60)
+
+        # Crosshair (only if not in cockpit mode, cockpit has its own)
+        # Crosshair (only if not in cockpit mode, cockpit has its own)
+        if self.camera.mode != CameraMode.COCKPIT:
+             self.render_crosshair()
+             
+        glMatrixMode(GL_MODELVIEW)
+        glPopMatrix()
+        glMatrixMode(GL_PROJECTION)
+        glPopMatrix()
+        glMatrixMode(GL_MODELVIEW)
+    
+    def render_cockpit(self):
+        """Render cockpit interior overlay"""
+        glDisable(GL_DEPTH_TEST)
+        glMatrixMode(GL_PROJECTION)
+        glPushMatrix()
+        glLoadIdentity()
+        glOrtho(0, WIN_W, 0, WIN_H, -1, 1)
+        glMatrixMode(GL_MODELVIEW)
+        glPushMatrix()
+        glLoadIdentity()
+        
+        # Cockpit Color (Dark Grey)
+        glColor3f(0.15, 0.15, 0.18)
+        
+        # Bottom Dashboard
+        glBegin(GL_QUADS)
+        glVertex2f(0, 0)
+        glVertex2f(WIN_W, 0)
+        glVertex2f(WIN_W, WIN_H * 0.35) # Dashboard height
+        glVertex2f(0, WIN_H * 0.35)
+        glEnd()
+        
+        # Frame sides (simulate canopy)
+        glColor3f(0.1, 0.1, 0.12)
+        glBegin(GL_QUADS)
+        # Left pillar
+        glVertex2f(0, WIN_H * 0.35)
+        glVertex2f(WIN_W * 0.15, WIN_H * 0.35)
+        glVertex2f(WIN_W * 0.05, WIN_H)
+        glVertex2f(0, WIN_H)
+        
+        # Right pillar
+        glVertex2f(WIN_W, WIN_H * 0.35)
+        glVertex2f(WIN_W * 0.85, WIN_H * 0.35)
+        glVertex2f(WIN_W * 0.95, WIN_H)
+        glVertex2f(WIN_W, WIN_H)
+        
+        # Top frame
+        glVertex2f(0, WIN_H * 0.95)
+        glVertex2f(WIN_W, WIN_H * 0.95)
+        glVertex2f(WIN_W, WIN_H)
+        glVertex2f(0, WIN_H)
+        glEnd()
+        
+        # Instruments
+        center_x = WIN_W / 2
+        dash_y = WIN_H * 0.2
+        
+        # Radar Screen (Center)
+        glColor3f(0.0, 0.2, 0.0)
+        glBegin(GL_QUADS)
+        glVertex2f(center_x - 60, dash_y - 60)
+        glVertex2f(center_x + 60, dash_y - 60)
+        glVertex2f(center_x + 60, dash_y + 60)
+        glVertex2f(center_x - 60, dash_y + 60)
+        glEnd()
+        
+        # Radar Outline
+        glColor3f(0.3, 0.3, 0.3)
+        glLineWidth(2)
+        glBegin(GL_LINE_LOOP)
+        glVertex2f(center_x - 60, dash_y - 60)
+        glVertex2f(center_x + 60, dash_y - 60)
+        glVertex2f(center_x + 60, dash_y + 60)
+        glVertex2f(center_x - 60, dash_y + 60)
+        glEnd()
+        
+        # Radar blips
+        # Draw player center
+        glColor3f(0.0, 1.0, 0.0)
+        glBegin(GL_POINTS)
+        glVertex2f(center_x, dash_y)
+        glEnd()
+        
+        # Draw simplified enemies on this mini-radar
+        # We need to project 3D relative pos to 2D
+        glPointSize(3)
+        glBegin(GL_POINTS)
+        for enemy in self.enemies:
+            if enemy.alive:
+                # Relative pos
+                rel_x = enemy.position.x - self.player.position.x
+                rel_z = enemy.position.z - self.player.position.z
+                
+                # Simple rotation to match player heading
+                rad = math.radians(self.player.rotation)
+                rot_x = rel_x * math.cos(-rad) - rel_z * math.sin(-rad)
+                rot_z = rel_x * math.sin(-rad) + rel_z * math.cos(-rad)
+                
+                # Scale down for radar
+                radar_scale = 0.05
+                r_x = center_x + rot_x * radar_scale
+                r_y = dash_y - rot_z * radar_scale # Z is forward/back, maps to Y on screen
+                
+                # Clamp to radar screen
+                if abs(r_x - center_x) < 55 and abs(r_y - dash_y) < 55:
+                     glColor3f(1.0, 0.0, 0.0)
+                     glVertex2f(r_x, r_y)
+        glEnd()
+        glPointSize(1)
+        
+        # HUD / Glass info (Green text on "glass")
+        self.render_text("HUD ACTIVE", center_x - 30, WIN_H * 0.6, (0, 1, 0))
+        
+        # Artificial Horizon Line (Simplified)
+        pitch_offset = self.player.pitch * 2
+        glColor3f(0.5, 1.0, 0.0)
+        glLineWidth(1)
+        glBegin(GL_LINES)
+        glVertex2f(center_x - 100, WIN_H * 0.5 + pitch_offset)
+        glVertex2f(center_x + 100, WIN_H * 0.5 + pitch_offset)
+        
+        # Vertical markers on horizon
+        glVertex2f(center_x - 100, WIN_H * 0.5 + pitch_offset - 5)
+        glVertex2f(center_x - 100, WIN_H * 0.5 + pitch_offset + 5)
+        glVertex2f(center_x + 100, WIN_H * 0.5 + pitch_offset - 5)
+        glVertex2f(center_x + 100, WIN_H * 0.5 + pitch_offset + 5)
+        glEnd()
+        
+        # Crosshair projected
+        glColor3f(0.0, 1.0, 0.0)
+        glBegin(GL_LINES)
+        glVertex2f(center_x - 10, WIN_H * 0.5)
+        glVertex2f(center_x + 10, WIN_H * 0.5)
+        glVertex2f(center_x, WIN_H * 0.5 - 10)
+        glVertex2f(center_x, WIN_H * 0.5 + 10)
+        glEnd()
+        
+        glPopMatrix()
+        glMatrixMode(GL_PROJECTION)
+        glPopMatrix()
+        glMatrixMode(GL_MODELVIEW)
+        glEnable(GL_DEPTH_TEST)
+        
+        # Score
+        self.render_text(f"SCORE: {self.score}", WIN_W - 250, WIN_H - 40)
+        
+        # Combo
+        if self.combo > 1:
+            self.render_text(f"COMBO x{self.combo}", WIN_W - 250, WIN_H - 70, (1, 0.8, 0))
+        
+        # Ammo
+        self.render_text(f"MISSILES: {self.player.missiles}", 20, 60)
+        
+        # Accuracy
+        if self.shots_fired > 0:
+            accuracy = int((self.shots_hit / self.shots_fired) * 100)
+            self.render_text(f"ACCURACY: {accuracy}%", 20, 30)
+        
+        # Minimap radar
+        self.render_radar()
+        
+        # 2D Crosshair (aiming reticle)
+        self.render_crosshair()
+        
+        # Debug info
+        if self.god_mode:
+            self.render_text("GOD MODE", WIN_W // 2 - 50, WIN_H - 40, (1, 1, 0))
+    
+    def render_radar(self):
+        """Render minimap radar"""
+        radar_size = 150
+        radar_x = WIN_W - radar_size - 20
+        radar_y = 20
+        
+        # Background
+        glColor4f(0, 0, 0, 0.5)
+        glBegin(GL_QUADS)
+        glVertex2f(radar_x, radar_y)
+        glVertex2f(radar_x + radar_size, radar_y)
+        glVertex2f(radar_x + radar_size, radar_y + radar_size)
+        glVertex2f(radar_x, radar_y + radar_size)
+        glEnd()
+        
+        # Border
+        glColor3f(0, 1, 0)
+        glBegin(GL_LINE_LOOP)
+        glVertex2f(radar_x, radar_y)
+        glVertex2f(radar_x + radar_size, radar_y)
+        glVertex2f(radar_x + radar_size, radar_y + radar_size)
+        glVertex2f(radar_x, radar_y + radar_size)
+        glEnd()
+        
+        # Player (center)
+        center_x = radar_x + radar_size / 2
+        center_y = radar_y + radar_size / 2
+        glColor3f(0, 1, 0)
+        glPointSize(5)
+        glBegin(GL_POINTS)
+        glVertex2f(center_x, center_y)
+        glEnd()
+        
+        # Enemies
+        scale = radar_size / (WORLD_SIZE * 2)
+        for enemy in self.enemies:
+            if enemy.alive:
+                rel_x = (enemy.position.x - self.player.position.x) * scale
+                rel_z = (enemy.position.z - self.player.position.z) * scale
+                
+                ex = center_x + rel_x
+                ey = center_y - rel_z  # Flip Z for screen coords
+                
+                # Only show if in radar range
+                if (radar_x < ex < radar_x + radar_size and 
+                    radar_y < ey < radar_y + radar_size):
+                    glColor3f(1, 0, 0)
+                    glBegin(GL_POINTS)
+                    glVertex2f(ex, ey)
+                    glEnd()
+        
+        glPointSize(1)
+    
+    def render_crosshair(self):
+        """Render 2D aiming crosshair in center of screen"""
+        center_x = WIN_W / 2
+        center_y = WIN_H / 2 + 80  # Offset upward to represent aiming above plane
+        size = 20
+        gap = 5
+        thickness = 2
+        
+        glColor3f(0, 1, 0)  # Green crosshair
+        glLineWidth(thickness)
+        
+        # Draw + sign
+        glBegin(GL_LINES)
+        # Horizontal line (left)
+        glVertex2f(center_x - size, center_y)
+        glVertex2f(center_x - gap, center_y)
+        # Horizontal line (right)
+        glVertex2f(center_x + gap, center_y)
+        glVertex2f(center_x + size, center_y)
+        # Vertical line (top)
+        glVertex2f(center_x, center_y + gap)
+        glVertex2f(center_x, center_y + size)
+        # Vertical line (bottom)
+        glVertex2f(center_x, center_y - size)
+        glVertex2f(center_x, center_y - gap)
+        glEnd()
+        
+        # Center dot
+        glPointSize(4)
+        glBegin(GL_POINTS)
+        glVertex2f(center_x, center_y)
+        glEnd()
+        glPointSize(1)
+        
+        glLineWidth(1)
+
+    def render_text(self, text, x, y, color=(1, 1, 1)):
+        """Simple text rendering using GLUT"""
+        glColor3f(*color)
+        glRasterPos2f(x, y)
+        for char in text:
+            glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, ord(char))
+    
+    def render_menu(self):
+        glMatrixMode(GL_PROJECTION)
+        glLoadIdentity()
+        glOrtho(0, WIN_W, 0, WIN_H, -1, 1)
+        glMatrixMode(GL_MODELVIEW)
+        glLoadIdentity()
+        
+        self.render_text("SKYSTRIKE", WIN_W // 2 - 80, WIN_H // 2 + 100, (0.2, 0.8, 1.0))
+        self.render_text("Aerial Combat Simulation", WIN_W // 2 - 120, WIN_H // 2 + 60)
+        self.render_text("Press SPACE to Start", WIN_W // 2 - 100, WIN_H // 2)
+        self.render_text("Controls:", WIN_W // 2 - 200, WIN_H // 2 - 60)
+        self.render_text("  W/S - Pitch Up/Down", WIN_W // 2 - 200, WIN_H // 2 - 90)
+        self.render_text("  A/D - Turn Left/Right", WIN_W // 2 - 200, WIN_H // 2 - 120)
+        self.render_text("  SPACE/SHIFT - Altitude", WIN_W // 2 - 200, WIN_H // 2 - 150)
+        self.render_text("  Left Click - Machine Gun", WIN_W // 2 - 200, WIN_H // 2 - 180)
+        self.render_text("  Right Click - Missile", WIN_W // 2 - 200, WIN_H // 2 - 210)
+        self.render_text("  C - Change Camera", WIN_W // 2 - 200, WIN_H // 2 - 240)
+        self.render_text("  ESC - Pause", WIN_W // 2 - 200, WIN_H // 2 - 270)
+    
+    def render_pause_overlay(self):
+        glMatrixMode(GL_PROJECTION)
+        glLoadIdentity()
+        glOrtho(0, WIN_W, 0, WIN_H, -1, 1)
+        glMatrixMode(GL_MODELVIEW)
+        glLoadIdentity()
+        
+        # Semi-transparent overlay
+        glColor4f(0, 0, 0, 0.5)
+        glBegin(GL_QUADS)
+        glVertex2f(0, 0)
+        glVertex2f(WIN_W, 0)
+        glVertex2f(WIN_W, WIN_H)
+        glVertex2f(0, WIN_H)
+        glEnd()
+        
+        self.render_text("PAUSED", WIN_W // 2 - 50, WIN_H // 2, (1, 1, 0))
+        self.render_text("Press ESC to Resume", WIN_W // 2 - 100, WIN_H // 2 - 40)
+    
+    def render_game_over(self):
+        glMatrixMode(GL_PROJECTION)
+        glLoadIdentity()
+        glOrtho(0, WIN_W, 0, WIN_H, -1, 1)
+        glMatrixMode(GL_MODELVIEW)
+        glLoadIdentity()
+        
+        # Semi-transparent overlay
+        glColor4f(0, 0, 0, 0.7)
+        glBegin(GL_QUADS)
+        glVertex2f(0, 0)
+        glVertex2f(WIN_W, 0)
+        glVertex2f(WIN_W, WIN_H)
+        glVertex2f(0, WIN_H)
+        glEnd()
+        
+        self.render_text("GAME OVER", WIN_W // 2 - 70, WIN_H // 2 + 50, (1, 0, 0))
+        self.render_text(f"Final Score: {self.score}", WIN_W // 2 - 80, WIN_H // 2)
+        
+        if self.shots_fired > 0:
+            accuracy = int((self.shots_hit / self.shots_fired) * 100)
+            self.render_text(f"Accuracy: {accuracy}%", WIN_W // 2 - 70, WIN_H // 2 - 40)
+        
+        self.render_text("Press R to Restart", WIN_W // 2 - 90, WIN_H // 2 - 100)
+        self.render_text("Press Q to Quit", WIN_W // 2 - 70, WIN_H // 2 - 130)
 
 
 
